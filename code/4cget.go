@@ -51,7 +51,7 @@ func findImages(html, siteID string) []string {
 	for _, match := range matches {
 		url := match[1]
 		if siteID == siteInfoMap["4chan"].ID {
-			url = strings.Replace(url, "//i.4cdn.org", "https://i.4cdn.org", 1)
+			url = strings.Replace(url, "//i.4cdn.org", "https://i.4cdn.org", 1) 
 		}
 		out = append(out, url)
 	}
