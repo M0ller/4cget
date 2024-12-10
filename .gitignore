@@ -1,6 +1,8 @@
 # Created by https://www.toptal.com/developers/gitignore/api/git,gpg,ssh,vim,linux,macos,windows,notepadpp,sublimetext,intellij+all,visualstudiocode
 # Edit at https://www.toptal.com/developers/gitignore?templates=git,gpg,ssh,vim,linux,macos,windows,notepadpp,sublimetext,intellij+all,visualstudiocode
 
+*gif
+
 ### Git ###
 # Created by git for backups. To disable backups in Git:
 # $ git config --global mergetool.keepBackup false

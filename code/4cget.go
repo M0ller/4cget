@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,13 +15,23 @@ import (
 	"time"
 )
 
+type Config struct {
+	RetryAttempts        int
+	SleepBetweenAttempts time.Duration
+}
+
+var GlobalConfig = Config{
+	RetryAttempts:        10,
+	SleepBetweenAttempts: 5000 * time.Millisecond,
+}
+
 var monitorMode bool
 
 // SiteInfo holds the URL pattern, regex for image extraction, and an ID.
 type SiteInfo struct {
-	ID     string
-	URL    string
-	ImgRE  *regexp.Regexp
+	ID    string
+	URL   string
+	ImgRE *regexp.Regexp
 }
 
 // Initialize the site info map with URL patterns and corresponding regex.
@@ -76,34 +86,72 @@ func unique(input []string) []string {
 func downloadFile(wg *sync.WaitGroup, url string, fileName string, path string) {
 	defer wg.Done()
 
-	resp, _ := http.Get(url)
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 404 {
-		filePath := path + "/" + fileName
-		if _, err := os.Stat(filePath); os.IsNotExist(err) || !monitorMode {
-			img, err := os.Create(filePath)
-			if err != nil {
-				fmt.Println("[!] Error creating file:", err)
-				return
-			}
-			defer img.Close()
-
-			b, err := io.Copy(img, resp.Body)
-			if err != nil {
-				fmt.Println("[!] Error copying response body:", err)
-				return
-			}
-
-			suffixes := []string{"B", "KB", "MB", "GB", "TB"}
-
-			base := math.Log(float64(b)) / math.Log(1024)
-			getSize := math.Pow(1024, base-math.Floor(base))
-			getSuffix := suffixes[int(math.Floor(base))]
-
-			fmt.Printf("File downloaded: %s - Size: %.2f %s\n", fileName, getSize, getSuffix)
-		}
+	filePathName := filepath.Join(path, fileName)
+	if fileExists(filePathName) {
+		return
 	}
+
+	var resp *http.Response
+	var err error
+	i := 0
+	for i < GlobalConfig.RetryAttempts {
+		resp, err = http.Get(url)
+		if err != nil {
+			fmt.Println("Error during GET request:", err)
+			time.Sleep(GlobalConfig.SleepBetweenAttempts)
+			i++
+			continue
+		}
+
+		if resp.StatusCode != 404 && resp.StatusCode != 429 {
+			defer resp.Body.Close()
+			break
+		}
+		resp.Body.Close()
+
+		time.Sleep(GlobalConfig.SleepBetweenAttempts)
+		i++
+	}
+
+	if resp.StatusCode != 200 {
+		fmt.Println("Failed to download: ", fileName)
+		return
+	}
+
+	filePath := path + "/" + fileName
+	if _, err := os.Stat(filePath); os.IsNotExist(err) || !monitorMode {
+		img, err := os.Create(filePath)
+		if err != nil {
+			fmt.Println("[!] Error creating file:", err)
+			return
+		}
+		defer img.Close()
+
+		b, err := io.Copy(img, resp.Body)
+		if err != nil {
+			fmt.Println("[!] Error copying response body:", err)
+			return
+		}
+
+		suffixes := []string{"B", "KB", "MB", "GB", "TB"}
+
+		base := math.Log(float64(b)) / math.Log(1024)
+		getSize := math.Pow(1024, base-math.Floor(base))
+		getSuffix := suffixes[int(math.Floor(base))]
+
+		fmt.Printf("File downloaded: %s - Size: %.2f %s\n", fileName, getSize, getSuffix)
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		panic(err) // Handle other errors (e.g., permission issues)
+	}
+	return !info.IsDir()
 }
 
 func main() {
@@ -160,11 +208,11 @@ func main() {
 ███████║██║░░██╗██║░░╚██╗██╔══╝░░░░░██║░░░
 ╚════██║╚█████╔╝╚██████╔╝███████╗░░░██║░░░
 ░░░░░╚═╝░╚════╝░░╚═════╝░╚══════╝░░░╚═╝░░░
-                    [ github.com/SegoCode ]` + "\n")
+                    [ github.com/SegoCode ]`)
 
-	fmt.Println("[*] DOWNLOAD STARTED (" + inputUrl + ") [*]\n")
+	fmt.Println("[*] DOWNLOAD STARTED (" + inputUrl + ") [*]")
 	if monitorMode {
-		fmt.Println("[*] MONITOR MODE ENABLE [*]\n")
+		fmt.Println("[*] MONITOR MODE ENABLE [*]")
 	}
 
 	start := time.Now()
@@ -191,13 +239,13 @@ func main() {
 
 	for { // Main loop for monitorMode
 		resp, _ := http.Get(inputUrl)
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		for _, each := range findImages(string(body), siteID) {
-			parts := strings.Split(each, "/")
+		for _, link := range findImages(string(body), siteID) {
+			parts := strings.Split(link, "/")
 			nameImg := parts[len(parts)-1]
 			wg.Add(1)
-			go downloadFile(&wg, each, nameImg, pathResult)
+			go downloadFile(&wg, link, nameImg, pathResult)
 			files++
 		}
 		wg.Wait()
@@ -213,5 +261,5 @@ func main() {
 		}
 	}
 
-	fmt.Printf("\n✓ DOWNLOAD COMPLETE, %v FILES IN %v\n", files, time.Since(start))
+	fmt.Printf("\n✓ DOWNLOAD COMPLETE, %v FILES IN %v for thread: %s \n", files, time.Since(start), thread)
 }
